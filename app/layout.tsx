@@ -1,5 +1,7 @@
 import '../styles/globals.css'
 import React from 'react'
+import { AuthProvider } from '@/contexts/AuthContext'
+import Header from '@/components/Header'
 
 export const metadata = {
   title: 'Images by AI',
@@ -10,9 +12,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="fr">
       <body>
-        <main className="min-h-screen flex items-center justify-center p-6">
-          <div className="w-full max-w-3xl">{children}</div>
-        </main>
+        <AuthProvider>
+          <Header />
+          <main>{children}</main>
+        </AuthProvider>
       </body>
     </html>
   )
