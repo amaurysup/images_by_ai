@@ -24,35 +24,39 @@ export async function POST(req: Request) {
     const { data: publicUrlData } = supabaseServer.storage.from(process.env.SUPABASE_INPUT_BUCKET!).getPublicUrl(uploadData.path)
     const publicUrl = publicUrlData.publicUrl
 
-    // Call Replicate
+    console.log('📸 Image uploadée:', publicUrl)
+
+    // Call Replicate with nano-banana model
     const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN })
 
-    const model = process.env.REPLICATE_MODEL || 'google/nano-banana'
-
-    // The actual Replicate model input shape depends on model; here we assume an input image URL and prompt field
-    const prediction = await replicate.predictions.create({
-      version: model,
-      input: {
-        image: publicUrl,
-        prompt
-      }
-    })
-
-    // Poll prediction until completed
-    let outputUrl: string | null = null
-    if (prediction && prediction.output && prediction.output.length) {
-      outputUrl = prediction.output[0]
-    } else if (prediction && prediction.status !== 'succeeded') {
-      // simple polling
-      let p = prediction
-      while (p.status !== 'succeeded' && p.status !== 'failed') {
-        await new Promise((r) => setTimeout(r, 1500))
-        p = await replicate.predictions.get(p.id)
-      }
-      if (p.status === 'succeeded') outputUrl = Array.isArray(p.output) ? p.output[0] : p.output
+    const input = {
+      prompt: prompt,
+      image_input: [publicUrl]  // nano-banana expects an array of image URLs
     }
 
-    if (!outputUrl) throw new Error('No output from Replicate')
+    console.log('🤖 Appel Replicate avec:', input)
+
+    // Use replicate.run() instead of predictions.create() for nano-banana
+    const output = await replicate.run("google/nano-banana", { input })
+
+    console.log('✅ Output reçu:', output)
+
+    // Extract the URL from the output
+    let outputUrl: string | null = null
+    if (output && typeof output === 'object' && 'url' in output) {
+      outputUrl = (output as any).url()
+    } else if (Array.isArray(output) && output.length > 0) {
+      outputUrl = output[0]
+    } else if (typeof output === 'string') {
+      outputUrl = output
+    }
+
+    if (!outputUrl) {
+      console.error('❌ Format de output inattendu:', output)
+      throw new Error('No valid output URL from Replicate')
+    }
+
+    console.log('🎨 URL de l\'image générée:', outputUrl)
 
     // Download generated image
     const res = await fetch(outputUrl)
