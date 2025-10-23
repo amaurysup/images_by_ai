@@ -61,11 +61,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Protect API routes (except public ones if any)
+  // Protect API routes (except public ones)
   if (request.nextUrl.pathname.startsWith('/api/') && !user) {
-    if (request.nextUrl.pathname !== '/api/auth') { // Add exceptions if needed
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Allow webhook route (Stripe will call it)
+    if (request.nextUrl.pathname === '/api/webhooks/stripe') {
+      return response
     }
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   return response

@@ -38,34 +38,54 @@ export async function POST(req: Request) {
       }
     )
 
-    const form = await req.formData()
-    const file = form.get('image') as File | null
-    const prompt = form.get('prompt') as string | null
+    const body = await req.json()
+    const { projectId } = body
 
-    if (!file || !prompt) return NextResponse.json({ error: 'Missing image or prompt' }, { status: 400 })
+    if (!projectId) {
+      return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
+    }
 
-    // Upload to input-images bucket
-    const arrayBuffer = await file.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-    const filename = `input-${Date.now()}-${file.name}`
+    // Récupérer le projet et vérifier le paiement
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .single()
 
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from(process.env.SUPABASE_INPUT_BUCKET!)
-      .upload(filename, buffer, { contentType: file.type })
+    if (projectError || !project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    }
 
-    if (uploadError) throw uploadError
+    // SÉCURITÉ: Vérifier que le paiement est complété
+    if (project.payment_status !== 'paid') {
+      return NextResponse.json({ error: 'Payment required' }, { status: 402 })
+    }
 
-    const { data: publicUrlData } = supabase.storage.from(process.env.SUPABASE_INPUT_BUCKET!).getPublicUrl(uploadData.path)
-    const publicUrl = publicUrlData.publicUrl
+    // Vérifier que la génération n'a pas déjà été faite
+    if (project.status === 'completed') {
+      return NextResponse.json({ error: 'Already generated' }, { status: 400 })
+    }
 
-    console.log('📸 Image uploadée:', publicUrl)
+    console.log('🎨 Démarrage génération pour projet:', projectId)
+
+    const inputImageUrl = project.input_image_url
+    const prompt = project.prompt
+
+    console.log('📸 Image déjà uploadée:', inputImageUrl)
+
+    // Mettre à jour le status du projet à 'processing'
+    await supabase
+      .from('projects')
+      .update({ status: 'processing' })
+      .eq('id', projectId)
 
     // Call Replicate with nano-banana model
     const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN })
 
     const input = {
       prompt: prompt,
-      image_input: [publicUrl]  // nano-banana expects an array of image URLs
+      image_input: [inputImageUrl]  // nano-banana expects an array of image URLs
     }
 
     console.log('🤖 Appel Replicate avec:', input)
@@ -106,21 +126,24 @@ export async function POST(req: Request) {
     const { data: outPublicData } = supabase.storage.from(process.env.SUPABASE_OUTPUT_BUCKET!).getPublicUrl(upOut.path)
     const outPublic = outPublicData.publicUrl
 
-    // Save to projects table with user_id
-    const { data: insertData, error: insertError } = await supabase.from('projects').insert({ 
-      user_id: user.id,
-      input_image_url: publicUrl, 
-      output_image_url: outPublic, 
-      prompt, 
-      status: 'completed' 
-    })
+    // Mettre à jour le projet avec l'image générée
+    const { error: updateError } = await supabase
+      .from('projects')
+      .update({ 
+        output_image_url: outPublic, 
+        status: 'completed' 
+      })
+      .eq('id', projectId)
+      .eq('user_id', user.id)
 
-    if (insertError) {
-      console.error('Error inserting into projects table:', insertError)
-      throw insertError
+    if (updateError) {
+      console.error('Error updating project:', updateError)
+      throw updateError
     }
 
-    return NextResponse.json({ output_image_url: outPublic })
+    console.log('✅ Génération terminée pour projet:', projectId)
+
+    return NextResponse.json({ output_image_url: outPublic, project_id: projectId })
   } catch (err: any) {
     console.error(err)
     return NextResponse.json({ error: err.message ?? String(err) }, { status: 500 })

@@ -9,9 +9,11 @@ type Project = {
   id: string
   created_at: string
   input_image_url: string
-  output_image_url: string
+  output_image_url: string | null
   prompt: string
   status: string
+  payment_status: string
+  payment_amount: number | null
 }
 
 export default function DashboardPage() {
@@ -75,14 +77,39 @@ export default function DashboardPage() {
     form.append('prompt', prompt)
 
     try {
-      const res = await fetch('/api/generate', { method: 'POST', body: form })
+      // Créer la checkout session
+      const res = await fetch('/api/create-checkout-session', { 
+        method: 'POST', 
+        body: form 
+      })
+      
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
+      
+      // Rediriger vers Stripe Checkout
+      if (data.url) {
+        window.location.href = data.url
+      }
+    } catch (err: any) {
+      console.error(err)
+      alert('Erreur: ' + err.message)
+      setLoading(false)
+    }
+  }
+
+  async function handleGenerate(projectId: string) {
+    try {
+      setLoading(true)
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId })
+      })
+
+      if (!res.ok) throw new Error(await res.text())
+      
       alert('Image générée avec succès !')
-      fetchProjects() // Refresh projects
-      setFile(null)
-      setPreviewUrl(null)
-      setPrompt('')
+      fetchProjects()
     } catch (err: any) {
       console.error(err)
       alert('Erreur: ' + err.message)
@@ -159,7 +186,7 @@ export default function DashboardPage() {
               disabled={loading}
               className="px-6 py-3 bg-gradient-to-r from-violet-600 to-pink-600 hover:from-violet-700 hover:to-pink-700 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? '⏳ Génération...' : '✨ Générer'}
+              {loading ? '🔄 Redirection vers paiement...' : '💳 Continuer vers le paiement (2€)'}
             </button>
           </form>
         </div>
@@ -174,19 +201,64 @@ export default function DashboardPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {projects.map((project) => (
-                <div key={project.id} className="border border-slate-700 rounded-lg overflow-hidden">
-                  <img src={project.output_image_url} alt="Generated" className="w-full h-48 object-cover" />
-                  <div className="p-3">
-                    <p className="text-sm text-slate-300 mb-2">{project.prompt}</p>
-                    <p className="text-xs text-slate-500 mb-2">
+                <div key={project.id} className="border border-slate-700 rounded-lg overflow-hidden bg-slate-900/30">
+                  {/* Image */}
+                  <div className="relative">
+                    <img 
+                      src={project.output_image_url || project.input_image_url} 
+                      alt={project.output_image_url ? "Generated" : "Input"} 
+                      className="w-full h-48 object-cover" 
+                    />
+                    {!project.output_image_url && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <span className="text-white text-sm font-medium">En attente</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Info */}
+                  <div className="p-3 space-y-2">
+                    <p className="text-sm text-slate-300">{project.prompt}</p>
+                    <p className="text-xs text-slate-500">
                       {new Date(project.created_at).toLocaleDateString('fr-FR')}
                     </p>
-                    <button
-                      onClick={() => handleDelete(project.id)}
-                      className="text-xs text-red-400 hover:text-red-300"
-                    >
-                      Supprimer
-                    </button>
+
+                    {/* Status badges */}
+                    <div className="flex gap-2 flex-wrap">
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        project.payment_status === 'paid' 
+                          ? 'bg-green-500/20 text-green-400' 
+                          : 'bg-yellow-500/20 text-yellow-400'
+                      }`}>
+                        {project.payment_status === 'paid' ? '✅ Payé' : '⏳ En attente'}
+                      </span>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        project.status === 'completed'
+                          ? 'bg-blue-500/20 text-blue-400'
+                          : 'bg-slate-500/20 text-slate-400'
+                      }`}>
+                        {project.status === 'completed' ? '✨ Généré' : '📝 Brouillon'}
+                      </span>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-2">
+                      {project.payment_status === 'paid' && !project.output_image_url && (
+                        <button
+                          onClick={() => handleGenerate(project.id)}
+                          disabled={loading}
+                          className="flex-1 text-xs px-3 py-2 bg-violet-600 hover:bg-violet-700 rounded transition-colors disabled:opacity-50"
+                        >
+                          ✨ Lancer la génération
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDelete(project.id)}
+                        className="text-xs px-3 py-2 text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        🗑️ Supprimer
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
